@@ -1,11 +1,12 @@
 [project]
 name = "share"
-version = "0.1.0"
+version = "0.2.0"
 description = "CLI file sharing backed by Cloudflare R2 + KV"
 requires-python = ">=3.12"
 dependencies = [
     "boto3>=1.42.54",
     "cloudflare>=4.3.1",
+    "Pillow>=11.0.0",
     "rich>=14.3.3",
 ]
 

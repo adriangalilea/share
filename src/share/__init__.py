@@ -3,8 +3,10 @@
 import argparse
 import json
 import mimetypes
+import shutil
 import subprocess
 import sys
+import tempfile
 import tomllib
 from datetime import datetime, timezone
 from pathlib import Path
@@ -80,6 +82,52 @@ def kv_list(config: dict, cf: cloudflare.Cloudflare) -> list[dict]:
     return results
 
 
+IMAGE_EXTENSIONS = frozenset({".jpg", ".jpeg", ".png", ".tiff", ".tif", ".webp", ".bmp", ".gif"})
+VIDEO_EXTENSIONS = frozenset({".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v"})
+
+
+def strip_metadata(path: Path) -> tuple[Path | None, bool]:
+    """Strip metadata from file.
+
+    Returns (cleaned_temp_path, stripped).
+    cleaned_temp_path is None when stripping wasn't possible (unsupported type or missing tool).
+    stripped=False with a warning printed when we WANTED to strip but couldn't.
+    """
+    ext = path.suffix.lower()
+    if ext in IMAGE_EXTENSIONS:
+        return _strip_image_metadata(path), True
+    if ext in VIDEO_EXTENSIONS:
+        return _strip_video_metadata(path)
+    return None, True  # not a strippable type, nothing to warn about
+
+
+def _strip_image_metadata(path: Path) -> Path:
+    from PIL import Image
+
+    img = Image.open(path)
+    temp_path = Path(tempfile.mkstemp(suffix=path.suffix)[1])
+    clean = img.copy()
+    clean.info = {}
+    save_kwargs = {}
+    if img.format == "JPEG":
+        save_kwargs["quality"] = 95
+    clean.save(temp_path, format=img.format, **save_kwargs)
+    return temp_path
+
+
+def _strip_video_metadata(path: Path) -> tuple[Path | None, bool]:
+    if not shutil.which("ffmpeg"):
+        console.print("[yellow]⚠ ffmpeg not found — video metadata NOT stripped (brew install ffmpeg)[/yellow]")
+        return None, False
+    temp_path = Path(tempfile.mkstemp(suffix=path.suffix)[1])
+    result = subprocess.run(
+        ["ffmpeg", "-i", str(path), "-map_metadata", "-1", "-c", "copy", "-y", str(temp_path)],
+        capture_output=True,
+    )
+    assert result.returncode == 0, f"ffmpeg metadata strip failed: {result.stderr.decode()}"
+    return temp_path, True
+
+
 # --- Commands ---
 
 
@@ -93,18 +141,36 @@ def cmd_upload(args: argparse.Namespace) -> None:
     date_prefix = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     r2_key = f"{date_prefix}/{name}"
     content_type = mimetypes.guess_type(name)[0] or "application/octet-stream"
-    size = path.stat().st_size
 
     s3 = r2_client(config)
     cf = cf_client(config)
 
-    with console.status(f"Uploading {name} ({size / 1_048_576:.1f} MB)..."):
-        s3.upload_file(
-            str(path),
-            config["cloudflare"]["bucket"],
-            r2_key,
-            ExtraArgs={"ContentType": content_type},
-        )
+    # CLI flags override config default (strip_metadata defaults to true)
+    config_default = config.get("upload", {}).get("strip_metadata", True)
+    should_strip = args.strip_metadata or (config_default and not args.keep_metadata)
+
+    upload_path = path
+    cleaned_path = None
+    if should_strip:
+        cleaned_path, _stripped = strip_metadata(path)
+        if cleaned_path:
+            upload_path = cleaned_path
+            saved_kb = (path.stat().st_size - cleaned_path.stat().st_size) / 1024
+            console.print(f"[dim]Metadata stripped ({saved_kb:.0f} KB removed)[/dim]")
+
+    size = upload_path.stat().st_size
+
+    try:
+        with console.status(f"Uploading {name} ({size / 1_048_576:.1f} MB)..."):
+            s3.upload_file(
+                str(upload_path),
+                config["cloudflare"]["bucket"],
+                r2_key,
+                ExtraArgs={"ContentType": content_type},
+            )
+    finally:
+        if cleaned_path:
+            cleaned_path.unlink(missing_ok=True)
 
     metadata = {
         "name": name,
@@ -246,6 +312,9 @@ kv_namespace_id = "{kv_namespace_id}"
 
 [urls]
 public_base = "{public_base}"
+
+[upload]
+strip_metadata = true
 """
     CONFIG_PATH.write_text(config_content)
     console.print(f"\n[green]Config saved to {CONFIG_PATH}[/green]")
@@ -259,6 +328,9 @@ def main():
     p_upload = sub.add_parser("upload", help="Upload a file and get a public URL")
     p_upload.add_argument("file", help="Path to file")
     p_upload.add_argument("--name", help="Override filename")
+    meta_group = p_upload.add_mutually_exclusive_group()
+    meta_group.add_argument("--keep-metadata", action="store_true", help="Upload with metadata intact")
+    meta_group.add_argument("--strip-metadata", action="store_true", help="Strip metadata before upload")
 
     sub.add_parser("ls", help="List shared files")
 

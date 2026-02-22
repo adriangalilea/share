@@ -33,11 +33,28 @@ $ share ls
 ## Usage
 
 ```bash
-share upload file.mov                # upload → prints public URL, copies to clipboard
-share upload file.mov --name x.mov   # custom filename
-share ls                             # list shared files with metadata
-share rm video.mov                   # delete file + metadata
-share setup                          # interactive first-time config
+share upload file.mov                   # upload (strips metadata by default)
+share upload file.mov --name x.mov      # custom filename
+share upload file.mov --keep-metadata   # override: upload with metadata intact
+share upload file.mov --strip-metadata  # override: force strip even if config says keep
+share ls                                # list shared files with metadata
+share rm video.mov                      # delete file + metadata
+share setup                             # interactive first-time config
+```
+
+### Metadata stripping
+
+Uploads strip EXIF/metadata by default — GPS coordinates, camera model, timestamps, etc. are removed before the file leaves your machine. Controlled by `strip_metadata` in config, overridable per-upload with `--strip-metadata` / `--keep-metadata`.
+
+| Type | Method | Requirement |
+|------|--------|-------------|
+| Images (jpg, png, webp, tiff, bmp, gif) | Pillow | always available |
+| Videos (mp4, mov, mkv, avi, webm, m4v) | ffmpeg | `brew install ffmpeg` — warns if missing, uploads unstripped |
+
+## Install
+
+```bash
+uv tool install git+https://github.com/adriangalilea/share.git
 ```
 
 ## Architecture
@@ -149,6 +166,9 @@ kv_namespace_id = "..."
 
 [urls]
 public_base = "https://pub-<hash>.r2.dev"
+
+[upload]
+strip_metadata = true  # set to false to keep metadata by default
 ```
 
 ## KV Schema
