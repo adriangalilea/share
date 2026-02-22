@@ -1,0 +1,20 @@
+[project]
+name = "share"
+version = "0.1.0"
+description = "CLI file sharing backed by Cloudflare R2 + KV"
+requires-python = ">=3.12"
+dependencies = [
+    "boto3>=1.42.54",
+    "cloudflare>=4.3.1",
+    "rich>=14.3.3",
+]
+
+[project.scripts]
+share = "share:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.ruff]
+line-length = 120
