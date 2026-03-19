@@ -218,8 +218,8 @@ async function landingPage(env: Env): Promise<Response> {
 	.meta { color: #444; font-size: 0.8rem; margin-bottom: 1.5rem; }
 	.meta span { color: #666; font-weight: 500; }
 	table { width: 100%; border-collapse: collapse; text-align: left; }
-	th { color: #555; font-weight: 500; padding: 0.5rem 0.75rem; border-bottom: 1px solid #1a1a1a; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; }
-	td { padding: 0.65rem 0.75rem; border-bottom: 1px solid #111; font-size: 0.85rem; }
+	th { color: #555; font-weight: 500; padding: 0.5rem 0.75rem 0.5rem 0; border-bottom: 1px solid #1a1a1a; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; }
+	td { padding: 0.65rem 0.75rem 0.65rem 0; border-bottom: 1px solid #111; font-size: 0.85rem; }
 	.r { text-align: right; }
 	.dim { color: #555; }
 	a { color: #7eb8f7; text-decoration: none; }
