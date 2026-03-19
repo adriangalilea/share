@@ -20,6 +20,10 @@ export default {
 		const url = new URL(request.url);
 		const path = url.pathname.slice(1);
 
+		if (url.hostname !== env.SITE_NAME) {
+			return Response.redirect(`https://${env.SITE_NAME}/${path}`, 301);
+		}
+
 		if (path === "" || path === "index.html") {
 			return landingPage(env);
 		}
