@@ -47,8 +47,9 @@ async function serveFile(
 	const meta: FileMeta = parseKVValue(raw);
 
 	if (request.method === "HEAD") {
+		const isText = meta.content_type.startsWith("text/") || meta.content_type.includes("json") || meta.content_type.includes("xml") || meta.content_type.includes("javascript");
 		const headers = new Headers();
-		headers.set("Content-Type", meta.content_type);
+		headers.set("Content-Type", isText ? `${meta.content_type}; charset=utf-8` : meta.content_type);
 		headers.set("Content-Length", meta.size.toString());
 		headers.set("Accept-Ranges", "bytes");
 		headers.set("Cache-Control", "public, max-age=86400");
@@ -66,7 +67,8 @@ async function serveFile(
 	}
 
 	const headers = new Headers();
-	headers.set("Content-Type", meta.content_type);
+	const isText = meta.content_type.startsWith("text/") || meta.content_type.includes("json") || meta.content_type.includes("xml") || meta.content_type.includes("javascript");
+	headers.set("Content-Type", isText ? `${meta.content_type}; charset=utf-8` : meta.content_type);
 	headers.set("Accept-Ranges", "bytes");
 	headers.set("Cache-Control", "public, max-age=86400");
 
