@@ -2,6 +2,8 @@
 
 CLI file sharing with short links and download tracking. Backed by Cloudflare R2 + Workers KV + Workers. Zero cost, full ownership.
 
+Live at [icecube.to](https://icecube.to) · [🧊.to](https://🧊.to)
+
 ## Why
 
 Google Drive has no CLI. transfer.sh is dead. Presigned S3 URLs expire. This uploads a file, gives you a short URL, copies it to clipboard. Done.
