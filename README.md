@@ -1,35 +1,37 @@
 # share
 
-CLI file sharing with short links and download tracking. Backed by Cloudflare R2 + Workers KV + Workers. Zero cost, full ownership.
+CLI file sharing and link shortening with download tracking. Backed by Cloudflare R2 + Workers KV + Workers. Zero cost, full ownership.
 
 Live at [icecube.to](https://icecube.to) · [🧊.to](https://🧊.to)
 
 ## Why
 
-Google Drive has no CLI. transfer.sh is dead. Presigned S3 URLs expire. This uploads a file, gives you a short URL, copies it to clipboard. Done.
+Google Drive has no CLI. transfer.sh is dead. Presigned S3 URLs expire. This uploads a file or shortens a URL, gives you a short link, copies it to clipboard. Done.
 
 ```
 $ share upload README.md --slug readme.md --public
 https://icecube.to/readme.md (copied)
 
-$ share upload video.mov
-https://icecube.to/kX9mT (copied)
+$ share link https://github.com/adriangalilea/share --slug gh --public
+https://icecube.to/gh → https://github.com/adriangalilea/share (copied)
 
 $ share ls
-                           Shared Files
+                              Files
 ┏━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━┳━━━━━┓
 ┃ Slug      ┃ Name      ┃     Size ┃ Uploaded   ┃ DLs ┃ Vis ┃
 ┡━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━╇━━━━━┩
-│ readme.md │ README.md │   7.1 KB │ 2026-03-19 │   0 │ pub │
-│ kX9mT     │ video.mov │  55.5 MB │ 2026-03-19 │   3 │     │
+│ readme.md │ README.md │   7.2 KB │ 2026-03-19 │  15 │ pub │
 └───────────┴───────────┴──────────┴────────────┴─────┴─────┘
-2 files, 0.05 GB total (10 GB free tier)
+                              Links
+┏━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━┳━━━━━┓
+┃ Slug ┃ URL                                       ┃ Created    ┃ Clicks ┃ Vis ┃
+┡━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━╇━━━━━┩
+│ gh   │ https://github.com/adriangalilea/share     │ 2026-03-19 │      2 │ pub │
+└──────┴───────────────────────────────────────────┴────────────┴────────┴─────┘
 icecube.to/<slug>
-$ share rm kX9mT
-Deleted video.mov (/kX9mT)
 
-$ share setup
-# interactive first-time configuration
+$ share rm gh
+Deleted https://github.com/adriangalilea/share (/gh)
 ```
 
 This README is shared at [icecube.to/readme.md](https://icecube.to/readme.md).
@@ -37,13 +39,16 @@ This README is shared at [icecube.to/readme.md](https://icecube.to/readme.md).
 ## Usage
 
 ```bash
-share upload <file>                         # upload, auto-generate short slug
-share upload <file> --slug <name>           # custom slug → yourdomain.com/<name>
+share upload <file>                         # upload file, auto-generate slug
+share upload <file> --slug <name>           # custom slug
 share upload <file> --public                # show on landing page (default: private)
 share upload <file> --name <name>           # override download filename
 share upload <file> --keep-metadata         # skip EXIF/metadata stripping
-share ls                                    # list all files with download counts
-share rm <slug>                             # delete by slug, filename, or r2_key
+share link <url>                            # shorten a URL
+share link <url> --slug <name>              # custom slug for short link
+share link <url> --public                   # show on landing page
+share ls                                    # list all files and links
+share rm <slug>                             # delete by slug, filename, URL, or r2_key
 share setup                                 # interactive first-time config
 ```
 
@@ -191,5 +196,6 @@ R2's S3 endpoint uses TLS that some VPNs break. If uploads fail with SSL errors,
 ## KV schema
 
 ```
-slug:<slug> → { name, size, content_type, uploaded_at, downloads, r2_key, slug, public }
+slug:<slug> → file: { type?, name, size, content_type, uploaded_at, downloads, r2_key, slug, public }
+slug:<slug> → link: { type: "link", url, slug, created_at, clicks, public }
 ```

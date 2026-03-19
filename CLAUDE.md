@@ -10,7 +10,9 @@
 
 ## KV
 
-Single key per file: `slug:<slug>` → `{name, size, content_type, uploaded_at, downloads, r2_key, slug, public}`
+Single key per entry: `slug:<slug>` → metadata dict. Two types:
+- **file**: `{name, size, content_type, uploaded_at, downloads, r2_key, slug, public}`
+- **link**: `{type: "link", url, slug, created_at, clicks, public}`
 
 Python SDK writes KV values with a `{metadata, value}` wrapper. Both CLI and Worker handle unwrapping via `_parse_kv_value` / `parseKVValue`.
 

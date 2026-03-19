@@ -80,6 +80,16 @@ def kv_put(config: dict, cf: cloudflare.Cloudflare, key: str, value: dict) -> No
     )
 
 
+def kv_put_raw(config: dict, cf: cloudflare.Cloudflare, key: str, value: dict) -> None:
+    cf.kv.namespaces.values.update(
+        key_name=key,
+        account_id=config["cloudflare"]["account_id"],
+        namespace_id=config["cloudflare"]["kv_namespace_id"],
+        value=json.dumps(value),
+        metadata="{}",
+    )
+
+
 def _read_kv_response(raw) -> dict:
     """Read a BinaryAPIResponse from KV and parse the JSON value."""
     return _parse_kv_value(raw.read().decode())
@@ -287,28 +297,55 @@ def cmd_ls(args: argparse.Namespace) -> None:
         return
 
     base = config["urls"]["public_base"]
-    table = Table(title="Shared Files")
-    table.add_column("Slug", style="green")
-    table.add_column("Name", style="cyan")
-    table.add_column("Size", style="yellow", justify="right")
-    table.add_column("Uploaded", style="dim")
-    table.add_column("DLs", justify="right")
-    table.add_column("Vis", style="dim")
 
-    total_size = 0
-    for f in sorted(files, key=lambda x: x["uploaded_at"], reverse=True):
-        size_str = _format_size(f["size"])
-        total_size += f["size"]
-        slug = f.get("slug", "")
-        uploaded = f["uploaded_at"][:10]
-        vis = "pub" if f.get("public") else ""
-        table.add_row(slug, f["name"], size_str, uploaded, str(f["downloads"]), vis)
+    file_entries = [f for f in files if f.get("type") != "link"]
+    link_entries = [f for f in files if f.get("type") == "link"]
 
-    console.print(table)
-    total_gb = total_size / 1_073_741_824
-    console.print(
-        f"\n[dim]{len(files)} files, {total_gb:.2f} GB total (10 GB free tier)[/dim]"
-    )
+    if file_entries:
+        table = Table(title="Files")
+        table.add_column("Slug", style="green")
+        table.add_column("Name", style="cyan")
+        table.add_column("Size", style="yellow", justify="right")
+        table.add_column("Uploaded", style="dim")
+        table.add_column("DLs", justify="right")
+        table.add_column("Vis", style="dim")
+
+        total_size = 0
+        for f in sorted(file_entries, key=lambda x: x["uploaded_at"], reverse=True):
+            total_size += f["size"]
+            vis = "pub" if f.get("public") else ""
+            table.add_row(
+                f.get("slug", ""),
+                f["name"],
+                _format_size(f["size"]),
+                f["uploaded_at"][:10],
+                str(f["downloads"]),
+                vis,
+            )
+        console.print(table)
+        console.print(
+            f"[dim]{len(file_entries)} files, {total_size / 1_073_741_824:.2f} GB (10 GB free)[/dim]\n"
+        )
+
+    if link_entries:
+        table = Table(title="Links")
+        table.add_column("Slug", style="green")
+        table.add_column("URL", style="blue")
+        table.add_column("Created", style="dim")
+        table.add_column("Clicks", justify="right")
+        table.add_column("Vis", style="dim")
+
+        for f in sorted(link_entries, key=lambda x: x["created_at"], reverse=True):
+            vis = "pub" if f.get("public") else ""
+            table.add_row(
+                f.get("slug", ""),
+                f["url"],
+                f["created_at"][:10],
+                str(f["clicks"]),
+                vis,
+            )
+        console.print(table)
+
     console.print(f"[dim]{base}/<slug>[/dim]")
 
 
@@ -322,26 +359,58 @@ def cmd_rm(args: argparse.Namespace) -> None:
         f
         for f in files
         if f.get("slug") == args.name
-        or f["name"] == args.name
-        or f["r2_key"] == args.name
+        or f.get("name") == args.name
+        or f.get("r2_key") == args.name
+        or f.get("url") == args.name
     ]
 
-    assert matches, f"File not found: {args.name}. Use slug, filename, or r2_key."
+    assert matches, f"Not found: {args.name}. Use slug, filename, URL, or r2_key."
     if len(matches) > 1:
         console.print(f"[yellow]Multiple matches for '{args.name}':[/yellow]")
         for f in matches:
-            console.print(f"  {f.get('slug', '?'):15} {f['name']:30} {f['r2_key']}")
+            label = f.get("name") or f.get("url", "")
+            console.print(f"  {f.get('slug', '?'):15} {label}")
         console.print("[yellow]Use the slug to delete a specific one.[/yellow]")
         return
 
     target = matches[0]
-    s3 = r2_client(config)
 
     with console.status("Deleting..."):
-        s3.delete_object(Bucket=config["cloudflare"]["bucket"], Key=target["r2_key"])
+        if target.get("type") != "link":
+            s3 = r2_client(config)
+            s3.delete_object(
+                Bucket=config["cloudflare"]["bucket"], Key=target["r2_key"]
+            )
         kv_delete(config, cf, f"slug:{target['slug']}")
 
-    console.print(f"[red]Deleted {target['name']} (/{target.get('slug', '')})[/red]")
+    label = target.get("name") or target.get("url", "")
+    console.print(f"[red]Deleted {label} (/{target.get('slug', '')})[/red]")
+
+
+def cmd_link(args: argparse.Namespace) -> None:
+    config = load_config()
+    cf = cf_client(config)
+    slug = generate_slug(getattr(args, "slug", None))
+
+    with console.status("Checking slug..."):
+        existing = kv_get(config, cf, f"slug:{slug}")
+    assert not existing, f"Slug '{slug}' already taken. Pick another with --slug"
+
+    metadata = {
+        "type": "link",
+        "url": args.url,
+        "slug": slug,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "clicks": 0,
+        "public": args.public,
+    }
+
+    with console.status("Saving..."):
+        kv_put_raw(config, cf, f"slug:{slug}", metadata)
+
+    short_url = f"{config['urls']['public_base']}/{slug}"
+    subprocess.run(["pbcopy"], input=short_url.encode(), check=False)
+    console.print(f"[green]{short_url}[/green] → {args.url} (copied)")
 
 
 def cmd_setup(args: argparse.Namespace) -> None:
@@ -441,10 +510,15 @@ def main():
         "--strip-metadata", action="store_true", help="Strip metadata before upload"
     )
 
-    sub.add_parser("ls", help="List shared files")
+    p_link = sub.add_parser("link", help="Shorten a URL")
+    p_link.add_argument("url", help="URL to shorten")
+    p_link.add_argument("--slug", help="Custom slug (auto-generated if omitted)")
+    p_link.add_argument("--public", action="store_true", help="Show on landing page")
 
-    p_rm = sub.add_parser("rm", help="Delete a shared file")
-    p_rm.add_argument("name", help="Slug, filename, or r2_key to delete")
+    sub.add_parser("ls", help="List files and links")
+
+    p_rm = sub.add_parser("rm", help="Delete a file or link")
+    p_rm.add_argument("name", help="Slug, filename, URL, or r2_key to delete")
 
     sub.add_parser("setup", help="Configure Cloudflare credentials")
 
@@ -453,6 +527,10 @@ def main():
         parser.print_help()
         sys.exit(1)
 
-    {"upload": cmd_upload, "ls": cmd_ls, "rm": cmd_rm, "setup": cmd_setup}[
-        args.command
-    ](args)
+    {
+        "upload": cmd_upload,
+        "link": cmd_link,
+        "ls": cmd_ls,
+        "rm": cmd_rm,
+        "setup": cmd_setup,
+    }[args.command](args)

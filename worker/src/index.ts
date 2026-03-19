@@ -5,6 +5,7 @@ interface Env {
 }
 
 interface FileMeta {
+	type?: string;
 	name: string;
 	size: number;
 	content_type: string;
@@ -13,6 +14,9 @@ interface FileMeta {
 	r2_key: string;
 	slug: string;
 	public?: boolean;
+	url?: string;
+	clicks?: number;
+	created_at?: string;
 }
 
 export default {
@@ -34,11 +38,11 @@ export default {
 			return res;
 		}
 
-		return serveFile(path, request, env);
+		return serveSlug(path, request, env);
 	},
 };
 
-async function serveFile(
+async function serveSlug(
 	slug: string,
 	request: Request,
 	env: Env
@@ -48,7 +52,23 @@ async function serveFile(
 		return notFound(env);
 	}
 
-	const meta: FileMeta = parseKVValue(raw);
+	const meta = parseKVValue(raw);
+
+	if (meta.type === "link") {
+		meta.clicks = (meta.clicks || 0) + 1;
+		await env.KV.put(`slug:${slug}`, JSON.stringify(meta));
+		return Response.redirect(meta.url, 301);
+	}
+
+	return serveFile(meta as FileMeta, request, slug, env);
+}
+
+async function serveFile(
+	meta: FileMeta,
+	request: Request,
+	slug: string,
+	env: Env
+): Promise<Response> {
 
 	if (request.method === "HEAD") {
 		const isText = meta.content_type.startsWith("text/") || meta.content_type.includes("json") || meta.content_type.includes("xml") || meta.content_type.includes("javascript");
@@ -175,10 +195,14 @@ function notFound(env: Env): Response {
 }
 
 async function landingPage(env: Env): Promise<Response> {
-	const allFiles = await listFiles(env);
+	const allEntries = await listFiles(env);
+	const allFiles = allEntries.filter((f) => f.type !== "link");
+	const allLinks = allEntries.filter((f) => f.type === "link");
 	const publicFiles = allFiles.filter((f) => f.public);
+	const publicLinks = allLinks.filter((f) => f.public);
 	const totalDownloads = allFiles.reduce((sum, f) => sum + f.downloads, 0);
-	const hasPublicFiles = publicFiles.length > 0;
+	const totalClicks = allLinks.reduce((sum, f) => sum + (f.clicks || 0), 0);
+	const hasPublic = publicFiles.length > 0 || publicLinks.length > 0;
 
 	const fileRows = publicFiles
 		.map(
@@ -188,6 +212,21 @@ async function landingPage(env: Env): Promise<Response> {
 			<td class="r">${formatSize(f.size)}</td>
 			<td class="dim">${f.uploaded_at.slice(0, 10)}</td>
 			<td class="r">${f.downloads}</td>
+			<td class="copy-cell">
+				<button class="copy-btn" onclick="copy('icecube.to/${f.slug}')" title="Copy icecube.to link">📋</button>
+				<button class="copy-btn" onclick="copy('🧊.to/${f.slug}')" title="Copy 🧊.to link">🧊</button>
+			</td>
+		</tr>`
+		)
+		.join("");
+
+	const linkRows = publicLinks
+		.map(
+			(f) => `
+		<tr>
+			<td><a href="/${f.slug}">${f.slug}</a></td>
+			<td><a href="${f.url}" class="dim">${f.url}</a></td>
+			<td class="r">${f.clicks || 0}</td>
 			<td class="copy-cell">
 				<button class="copy-btn" onclick="copy('icecube.to/${f.slug}')" title="Copy icecube.to link">📋</button>
 				<button class="copy-btn" onclick="copy('🧊.to/${f.slug}')" title="Copy 🧊.to link">🧊</button>
@@ -266,12 +305,20 @@ async function landingPage(env: Env): Promise<Response> {
 	</header>
 
 	<main>
-		<p class="meta"><span>${allFiles.length}</span> files · <span>${totalDownloads}</span> downloads</p>
+		<p class="meta"><span>${allFiles.length}</span> files · <span>${totalDownloads}</span> downloads${allLinks.length > 0 ? ` · <span>${allLinks.length}</span> links · <span>${totalClicks}</span> clicks` : ""}</p>
 		${
-			hasPublicFiles
+			publicFiles.length > 0
 				? `<table>
 			<thead><tr><th>Name</th><th class="r">Size</th><th>Date</th><th class="r">DLs</th><th></th></tr></thead>
 			<tbody>${fileRows}</tbody>
+		</table>`
+				: ""
+		}
+		${
+			publicLinks.length > 0
+				? `<table>
+			<thead><tr><th>Slug</th><th>Destination</th><th class="r">Clicks</th><th></th></tr></thead>
+			<tbody>${linkRows}</tbody>
 		</table>`
 				: ""
 		}
