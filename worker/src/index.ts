@@ -67,8 +67,8 @@ async function serveFile(
 	}
 
 	const headers = new Headers();
-	const isText = meta.content_type.startsWith("text/") || meta.content_type.includes("json") || meta.content_type.includes("xml") || meta.content_type.includes("javascript");
-	headers.set("Content-Type", isText ? `${meta.content_type}; charset=utf-8` : meta.content_type);
+	const isBinary = /^(image|video|audio|font)\//.test(meta.content_type) || /octet-stream|zip|gzip|tar|pdf|wasm/.test(meta.content_type);
+	headers.set("Content-Type", isBinary ? meta.content_type : `${meta.content_type}; charset=utf-8`);
 	headers.set("Accept-Ranges", "bytes");
 	headers.set("Cache-Control", "public, max-age=86400");
 
