@@ -150,6 +150,7 @@ If not already done:
 1. Cloudflare dashboard → Add a site → your domain
 2. Update nameservers at your registrar to the ones Cloudflare gives you
 3. The worker deploy will create the DNS records automatically
+4. SSL/TLS → Edge Certificates → **Always Use HTTPS** → ON
 
 ### 6. Upload
 

@@ -14,5 +14,9 @@ id = "9f5e5e1925634e35965aa8527faa62bd"
 pattern = "icecube.to"
 custom_domain = true
 
+[[routes]]
+pattern = "xn--3u9h.to"
+custom_domain = true
+
 [vars]
 SITE_NAME = "icecube.to"

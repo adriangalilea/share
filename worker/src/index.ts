@@ -184,6 +184,10 @@ async function landingPage(env: Env): Promise<Response> {
 			<td class="r">${formatSize(f.size)}</td>
 			<td class="dim">${f.uploaded_at.slice(0, 10)}</td>
 			<td class="r">${f.downloads}</td>
+			<td class="copy-cell">
+				<button class="copy-btn" onclick="copy('icecube.to/${f.slug}')" title="Copy icecube.to link">📋</button>
+				<button class="copy-btn" onclick="copy('🧊.to/${f.slug}')" title="Copy 🧊.to link">🧊</button>
+			</td>
 		</tr>`
 		)
 		.join("");
@@ -231,6 +235,11 @@ async function landingPage(env: Env): Promise<Response> {
 		border-top: 1px solid #141414;
 	}
 	footer a { color: #444; }
+	.copy-cell { white-space: nowrap; }
+	.copy-btn { background: none; border: 1px solid #222; border-radius: 4px; cursor: pointer; padding: 0.2rem 0.4rem; font-size: 0.75rem; margin-left: 0.25rem; transition: border-color 0.2s; }
+	.copy-btn:hover { border-color: #555; }
+	.toast { position: fixed; bottom: 1.5rem; right: 1.5rem; background: #1a1a1a; color: #aaa; border: 1px solid #333; border-radius: 6px; padding: 0.5rem 1rem; font-size: 0.8rem; opacity: 0; transition: opacity 0.3s; pointer-events: none; }
+	.toast.show { opacity: 1; }
 	@media (min-width: 768px) {
 		header { padding: 3rem 3rem 2rem; }
 		main { padding: 0 3rem; }
@@ -257,7 +266,7 @@ async function landingPage(env: Env): Promise<Response> {
 		${
 			hasPublicFiles
 				? `<table>
-			<thead><tr><th>Name</th><th class="r">Size</th><th>Date</th><th class="r">DLs</th></tr></thead>
+			<thead><tr><th>Name</th><th class="r">Size</th><th>Date</th><th class="r">DLs</th><th></th></tr></thead>
 			<tbody>${fileRows}</tbody>
 		</table>`
 				: ""
@@ -267,6 +276,17 @@ async function landingPage(env: Env): Promise<Response> {
 	<footer>
 		built by <a href="https://adriangalilea.com">Adrian Galilea</a> · roll your own: <a href="https://github.com/adriangalilea/share">open source</a>
 	</footer>
+	<div class="toast" id="toast"></div>
+	<script>
+	function copy(url) {
+		navigator.clipboard.writeText('https://' + url).then(() => {
+			const t = document.getElementById('toast');
+			t.textContent = url + ' copied';
+			t.classList.add('show');
+			setTimeout(() => t.classList.remove('show'), 1500);
+		});
+	}
+	</script>
 </body>
 </html>`;
 
