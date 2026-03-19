@@ -199,6 +199,9 @@ def _format_size(size: int) -> str:
 # --- Commands ---
 
 
+EPOCH = 1773900000  # 2026-03-17, keeps sqids short
+
+
 def generate_slug(args_slug: str | None) -> str:
     if args_slug:
         slug = args_slug.lower().strip()
@@ -206,7 +209,7 @@ def generate_slug(args_slug: str | None) -> str:
             f"Invalid slug '{slug}'. Use lowercase alphanumeric, dots, hyphens, underscores. Max 63 chars."
         )
         return slug
-    return sqids.encode([int(time.time() * 1000)])
+    return sqids.encode([int(time.time()) - EPOCH])
 
 
 def cmd_upload(args: argparse.Namespace) -> None:
