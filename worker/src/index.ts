@@ -204,35 +204,24 @@ async function landingPage(env: Env): Promise<Response> {
 	const totalClicks = allLinks.reduce((sum, f) => sum + (f.clicks || 0), 0);
 	const hasPublic = publicFiles.length > 0 || publicLinks.length > 0;
 
-	const fileRows = publicFiles
-		.map(
-			(f) => `
+	const publicEntries = [...publicFiles, ...publicLinks];
+	const rows = publicEntries
+		.map((f) => {
+			const isLink = f.type === "link";
+			const name = isLink ? `<a href="/${f.slug}">${f.slug}</a>` : `<a href="/${f.slug}">${f.name}</a>`;
+			const detail = isLink ? `<a href="${f.url}">${f.url}</a>` : formatSize(f.size);
+			const hits = isLink ? (f.clicks || 0) : f.downloads;
+			return `
 		<tr>
-			<td><a href="/${f.slug}">${f.name}</a></td>
-			<td class="r">${formatSize(f.size)}</td>
-			<td class="dim">${f.uploaded_at.slice(0, 10)}</td>
-			<td class="r">${f.downloads}</td>
+			<td>${name}</td>
+			<td>${detail}</td>
+			<td class="r">${hits}</td>
 			<td class="copy-cell">
 				<button class="copy-btn" onclick="copy('icecube.to/${f.slug}')" title="Copy icecube.to link">📋</button>
 				<button class="copy-btn" onclick="copy('🧊.to/${f.slug}')" title="Copy 🧊.to link">🧊</button>
 			</td>
-		</tr>`
-		)
-		.join("");
-
-	const linkRows = publicLinks
-		.map(
-			(f) => `
-		<tr>
-			<td><a href="/${f.slug}">${f.slug}</a></td>
-			<td><a href="${f.url}" class="dim">${f.url}</a></td>
-			<td class="r">${f.clicks || 0}</td>
-			<td class="copy-cell">
-				<button class="copy-btn" onclick="copy('icecube.to/${f.slug}')" title="Copy icecube.to link">📋</button>
-				<button class="copy-btn" onclick="copy('🧊.to/${f.slug}')" title="Copy 🧊.to link">🧊</button>
-			</td>
-		</tr>`
-		)
+		</tr>`;
+		})
 		.join("");
 
 	const html = `<!DOCTYPE html>
@@ -255,29 +244,29 @@ async function landingPage(env: Env): Promise<Response> {
 	}
 	header .brand { display: flex; align-items: baseline; gap: 0.6rem; margin-bottom: 0.2rem; }
 	header .ice { font-size: 1.8rem; }
-	header h1 { font-size: 1rem; font-weight: 400; color: #555; }
+	header h1 { font-size: 1rem; font-weight: 400; color: #888; }
 	header .tagline { color: #555; font-size: 0.8rem; }
 	main {
 		flex: 1;
 		padding: 0 2rem;
 		max-width: 960px; width: 100%; margin: 0 auto;
 	}
-	.meta { color: #444; font-size: 0.8rem; margin-bottom: 1.5rem; }
-	.meta span { color: #666; font-weight: 500; }
+	.meta { color: #777; font-size: 0.8rem; margin-bottom: 1.5rem; }
+	.meta span { color: #aaa; font-weight: 500; }
 	table { width: 100%; border-collapse: collapse; text-align: left; }
-	th { color: #555; font-weight: 500; padding: 0.5rem 0.75rem 0.5rem 0; border-bottom: 1px solid #1a1a1a; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; }
+	th { color: #777; font-weight: 500; padding: 0.5rem 0.75rem 0.5rem 0; border-bottom: 1px solid #1a1a1a; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; }
 	td { padding: 0.65rem 0.75rem 0.65rem 0; border-bottom: 1px solid #111; font-size: 0.85rem; }
 	.r { text-align: right; }
-	.dim { color: #555; }
+	.dim { color: #888; }
 	a { color: #7eb8f7; text-decoration: none; }
 	a:hover { color: #aed4ff; }
 	footer {
 		padding: 1.5rem 2rem;
 		max-width: 960px; width: 100%; margin: 0 auto;
-		color: #333; font-size: 0.75rem;
-		border-top: 1px solid #141414;
+		color: #666; font-size: 0.75rem;
+		border-top: 1px solid #1a1a1a;
 	}
-	footer a { color: #444; }
+	footer a { color: #777; }
 	.copy-cell { white-space: nowrap; }
 	.copy-btn { background: none; border: 1px solid #222; border-radius: 4px; cursor: pointer; padding: 0.2rem 0.4rem; font-size: 0.75rem; margin-left: 0.25rem; transition: border-color 0.2s; }
 	.copy-btn:hover { border-color: #555; }
@@ -305,20 +294,12 @@ async function landingPage(env: Env): Promise<Response> {
 	</header>
 
 	<main>
-		<p class="meta"><span>${allFiles.length}</span> files · <span>${totalDownloads}</span> downloads${allLinks.length > 0 ? ` · <span>${allLinks.length}</span> links · <span>${totalClicks}</span> clicks` : ""}</p>
+		<p class="meta"><span>${publicFiles.length}</span> file${publicFiles.length !== 1 ? "s" : ""}${publicLinks.length > 0 ? ` · <span>${publicLinks.length}</span> link${publicLinks.length !== 1 ? "s" : ""}` : ""}</p>
 		${
-			publicFiles.length > 0
+			publicEntries.length > 0
 				? `<table>
-			<thead><tr><th>Name</th><th class="r">Size</th><th>Date</th><th class="r">DLs</th><th></th></tr></thead>
-			<tbody>${fileRows}</tbody>
-		</table>`
-				: ""
-		}
-		${
-			publicLinks.length > 0
-				? `<table>
-			<thead><tr><th>Slug</th><th>Destination</th><th class="r">Clicks</th><th></th></tr></thead>
-			<tbody>${linkRows}</tbody>
+			<thead><tr><th>Name</th><th>Detail</th><th class="r">Hits</th><th></th></tr></thead>
+			<tbody>${rows}</tbody>
 		</table>`
 				: ""
 		}
