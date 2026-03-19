@@ -23,6 +23,11 @@ $ share ls
 └───────────┴───────────┴──────────┴────────────┴─────┴─────┘
 2 files, 0.05 GB total (10 GB free tier)
 icecube.to/<slug>
+$ share rm kX9mT
+Deleted video.mov (/kX9mT)
+
+$ share setup
+# interactive first-time configuration
 ```
 
 This README is shared at [icecube.to/readme.md](https://icecube.to/readme.md).
@@ -30,28 +35,17 @@ This README is shared at [icecube.to/readme.md](https://icecube.to/readme.md).
 ## Usage
 
 ```bash
-share upload file.mov                       # upload, auto-generate short slug
-share upload file.mov --slug cool-vid       # custom slug
-share upload file.mov --public              # show on landing page (default: private)
-share upload file.mov --name x.mov          # custom download filename
-share upload file.mov --keep-metadata       # skip metadata stripping
-share ls                                    # list files with download counts
+share upload <file>                         # upload, auto-generate short slug
+share upload <file> --slug <name>           # custom slug → yourdomain.com/<name>
+share upload <file> --public                # show on landing page (default: private)
+share upload <file> --name <name>           # override download filename
+share upload <file> --keep-metadata         # skip EXIF/metadata stripping
+share ls                                    # list all files with download counts
 share rm <slug>                             # delete by slug, filename, or r2_key
 share setup                                 # interactive first-time config
 ```
 
-### Visibility
-
-Files are **private by default** — accessible via direct link but not listed on the landing page. Use `--public` to show a file on the landing page.
-
-### Metadata stripping
-
-Uploads strip EXIF/metadata by default — GPS coordinates, camera model, timestamps removed before upload. Override per-upload with `--keep-metadata` / `--strip-metadata`.
-
-| Type | Method | Requirement |
-|------|--------|-------------|
-| Images (jpg, png, webp, tiff, bmp, gif) | Pillow | always available |
-| Videos (mp4, mov, mkv, avi, webm, m4v) | ffmpeg | `brew install ffmpeg` |
+Uploads strip EXIF/metadata by default (images via Pillow, videos via ffmpeg).
 
 ## Install
 
