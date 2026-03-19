@@ -35,3 +35,4 @@ output/
 temp/
 
 .wrangler/
+node_modules/

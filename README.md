@@ -1,55 +1,57 @@
 # share
 
-CLI file sharing backed by Cloudflare R2 + Workers KV. Zero cost, full ownership, zero infrastructure.
+CLI file sharing with short links and download tracking. Backed by Cloudflare R2 + Workers KV + Workers. Zero cost, full ownership.
 
 ## Why
 
-Needed to send 165MB of thermal camera footage to a hardware vendor's support team. The options:
-
-- **Google Drive / iCloud** — no CLI, manual browser clicks, no API ownership
-- **transfer.sh** — public instance is dead, self-hosting needs a server
-- **Presigned S3 URLs** — requires wrapping two commands, expires
-- **This** — `share upload video.mov` → permanent public URL, copied to clipboard, done
-
-Built it in an afternoon. Uses only Cloudflare's free tier. No server, no account limits that matter, zero egress fees.
-
-### Real example
+Google Drive has no CLI. transfer.sh is dead. Presigned S3 URLs expire. This uploads a file, gives you a short URL, copies it to clipboard. Done.
 
 ```
-$ share upload thermal-failure-loop.mov
-https://pub-e7b92c0f4cba492c8c73fc7d9c4910e1.r2.dev/2026-02-22/loop_macro_video_everywhere.mov (copied)
+$ share upload README.md --slug readme.md --public
+https://icecube.to/readme.md (copied)
+
+$ share upload video.mov
+https://icecube.to/kX9mT (copied)
 
 $ share ls
-                                  Shared Files
-┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━┓
-┃ Name                             ┃     Size ┃ Uploaded   ┃ Downloads ┃ URL     ┃
-┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━┩
-│ loop_macro_video_everywhere.mov  │  55.5 MB │ 2026-02-22 │         0 │ https…  │
-│ before_on_and_on_before_loop.mov │ 109.1 MB │ 2026-02-22 │         0 │ https…  │
-└──────────────────────────────────┴──────────┴────────────┴───────────┴─────────┘
-2 files, 0.16 GB total (10 GB free tier)
+                           Shared Files
+┏━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━┳━━━━━┓
+┃ Slug      ┃ Name      ┃     Size ┃ Uploaded   ┃ DLs ┃ Vis ┃
+┡━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━╇━━━━━┩
+│ readme.md │ README.md │   7.1 KB │ 2026-03-19 │   0 │ pub │
+│ kX9mT     │ video.mov │  55.5 MB │ 2026-03-19 │   3 │     │
+└───────────┴───────────┴──────────┴────────────┴─────┴─────┘
+2 files, 0.05 GB total (10 GB free tier)
+icecube.to/<slug>
 ```
+
+This README is shared at [icecube.to/readme.md](https://icecube.to/readme.md).
 
 ## Usage
 
 ```bash
-share upload file.mov                   # upload (strips metadata by default)
-share upload file.mov --name x.mov      # custom filename
-share upload file.mov --keep-metadata   # override: upload with metadata intact
-share upload file.mov --strip-metadata  # override: force strip even if config says keep
-share ls                                # list shared files with metadata
-share rm video.mov                      # delete file + metadata
-share setup                             # interactive first-time config
+share upload file.mov                       # upload, auto-generate short slug
+share upload file.mov --slug cool-vid       # custom slug
+share upload file.mov --public              # show on landing page (default: private)
+share upload file.mov --name x.mov          # custom download filename
+share upload file.mov --keep-metadata       # skip metadata stripping
+share ls                                    # list files with download counts
+share rm <slug>                             # delete by slug, filename, or r2_key
+share setup                                 # interactive first-time config
 ```
+
+### Visibility
+
+Files are **private by default** — accessible via direct link but not listed on the landing page. Use `--public` to show a file on the landing page.
 
 ### Metadata stripping
 
-Uploads strip EXIF/metadata by default — GPS coordinates, camera model, timestamps, etc. are removed before the file leaves your machine. Controlled by `strip_metadata` in config, overridable per-upload with `--strip-metadata` / `--keep-metadata`.
+Uploads strip EXIF/metadata by default — GPS coordinates, camera model, timestamps removed before upload. Override per-upload with `--keep-metadata` / `--strip-metadata`.
 
 | Type | Method | Requirement |
 |------|--------|-------------|
 | Images (jpg, png, webp, tiff, bmp, gif) | Pillow | always available |
-| Videos (mp4, mov, mkv, avi, webm, m4v) | ffmpeg | `brew install ffmpeg` — warns if missing, uploads unstripped |
+| Videos (mp4, mov, mkv, avi, webm, m4v) | ffmpeg | `brew install ffmpeg` |
 
 ## Install
 
@@ -60,134 +62,137 @@ uv tool install git+https://github.com/adriangalilea/share.git
 ## Architecture
 
 ```
-CLI (Python/uv)                     Cloudflare Free Tier
-┌──────────────┐    boto3/S3 API    ┌─────────────┐
-│  share CLI   │ ─────────────────→ │     R2      │  10GB, zero egress
-│              │                    │  (files)    │
-│              │    CF Python SDK   ├─────────────┤
-│              │ ─────────────────→ │     KV      │  1GB, 100K reads/day
-│              │                    │ (metadata)  │
-└──────────────┘                    └─────────────┘
+CLI (Python)                        Cloudflare Free Tier
+┌──────────────┐    boto3/S3 API    ┌─────────────────┐
+│  share CLI   │ ─────────────────→ │       R2        │ files (10GB free)
+│              │                    └────────┬────────┘
+│              │    CF Python SDK           │
+│              │ ─────────────────→ ┌────────┴────────┐
+│              │                    │       KV        │ slug → metadata
+└──────────────┘                    └────────┬────────┘
+                                            │
+Browser                                     │
+┌──────────────┐                    ┌────────┴────────┐
+│  short link  │ ─────────────────→ │     Worker      │ serves files,
+│              │                    │ (custom domain) │ tracks downloads,
+└──────────────┘                    └─────────────────┘ landing page
 ```
 
-- **R2**: file storage via S3 API (boto3)
-- **Workers KV**: file metadata + download counts via Cloudflare Python SDK
-- **Public access**: r2.dev subdomain (rate-limited, fine for sharing links)
+The CLI uploads files to R2 and writes metadata to KV keyed by `slug:<slug>`. The Worker on your custom domain looks up slugs, streams files from R2 with range request support (for video/audio streaming), and increments download counters.
 
-## Cloudflare Free Tier Limits
-
-| Service | Free Limit | What we use it for |
-|---------|-----------|-------------------|
-| R2 | 10GB storage, 1M writes/mo, 10M reads/mo, zero egress | File storage |
-| Workers KV | 1GB storage, 100K reads/day, 1K writes/day | File metadata |
-
-## Setup
+## Self-hosting
 
 ### Prerequisites
 
-- Python >=3.12, uv
-- Cloudflare account (free)
+- Python >=3.12, [uv](https://docs.astral.sh/uv/)
+- Cloudflare account (free tier)
+- Node.js (for worker deployment)
+- A domain pointed to Cloudflare nameservers
 
-### 1. Create Cloudflare resources
+### 1. Install the CLI
 
 ```bash
-# Login to wrangler (opens browser)
-npx wrangler login
-
-# Create R2 bucket
-npx wrangler r2 bucket create share
-
-# Create KV namespace
-npx wrangler kv namespace create share
-# Note the namespace ID from output
+uv tool install git+https://github.com/adriangalilea/share.git
 ```
 
-### 2. Create API tokens
+### 2. Create Cloudflare resources
 
-**R2 API token** (for S3 uploads):
-- dashboard.cloudflare.com → R2 → Manage R2 API Tokens
-- Create **User API Token**
-- Permissions: **Object Read & Write**
-- Scope: `share` bucket
-- Save the Access Key ID + Secret Access Key
+You need two API tokens:
 
-**CF API token** (for KV operations):
-- dashboard.cloudflare.com → My Profile → API Tokens → Create Token
-- Use template: **Edit Cloudflare Workers**
-- This covers Workers KV read/write
+**R2 API token** (S3-compatible, for file uploads):
+- Cloudflare dashboard → R2 → Manage R2 API Tokens → Create
+- Permissions: Object Read & Write
+- Save the Access Key ID + Secret
+
+**CF API token** (for KV + worker deployment):
+- My Profile → API Tokens → Create Token
+- Use template: Edit Cloudflare Workers
+- Add permissions: Zone DNS Edit + Zone Read
 - Save the token
 
-### 3. Enable public access
-
-- dashboard.cloudflare.com → R2 → `share` bucket → Settings
-- Under **Public Development URL** → Enable
-- Copy the URL (looks like `https://pub-<hash>.r2.dev`)
-
-### 4. Configure share
+### 3. Run setup
 
 ```bash
 share setup
-# Paste: Account ID, R2 keys, CF API token, public URL
 ```
 
-Config is saved to `~/.config/share/config.toml`.
+This verifies credentials, creates the R2 bucket and KV namespace, and writes config to `~/.config/share/config.toml`.
 
-### 5. VPN / network note
+### 4. Configure and deploy the worker
 
-R2's S3 endpoint (`*.r2.cloudflarestorage.com`) uses TLS that some VPNs break. If uploads fail with SSL handshake errors, bypass the VPN for `r2.cloudflarestorage.com` or temporarily disconnect. The Cloudflare REST API (used for KV) is unaffected.
+Clone the repo and edit `worker/wrangler.toml`:
 
-## Upgrading to Custom Domain
+```toml
+name = "share"
+main = "src/index.ts"
+compatibility_date = "2026-03-19"
 
-When r2.dev rate limits become a problem:
+[[r2_buckets]]
+binding = "R2"
+bucket_name = "share"
 
-1. Add your domain to Cloudflare (if not already)
-2. R2 → `share` bucket → Settings → Custom Domains → Connect Domain
-3. Enter subdomain (e.g. `share.yourdomain.com`)
-4. Update `~/.config/share/config.toml`:
-   ```toml
-   [urls]
-   public_base = "https://share.yourdomain.com"
-   ```
+[[kv_namespaces]]
+binding = "KV"
+id = "your-kv-namespace-id"  # printed by share setup
 
-Custom domains get Cloudflare CDN caching + no rate limits. r2.dev is development-only.
+[[routes]]
+pattern = "yourdomain.com"
+custom_domain = true
+
+[vars]
+SITE_NAME = "yourdomain.com"
+```
+
+Then deploy:
+
+```bash
+cd worker
+npx wrangler deploy
+```
+
+### 5. Add your domain to Cloudflare
+
+If not already done:
+1. Cloudflare dashboard → Add a site → your domain
+2. Update nameservers at your registrar to the ones Cloudflare gives you
+3. The worker deploy will create the DNS records automatically
+
+### 6. Upload
+
+```bash
+share upload myfile.pdf
+# https://yourdomain.com/kX9mT (copied)
+```
 
 ## Config
 
-`~/.config/share/config.toml`:
+`~/.config/share/config.toml` — see [`config.example.toml`](config.example.toml).
 
-```toml
-[cloudflare]
-account_id = "..."
-r2_access_key_id = "..."
-r2_secret_access_key = "..."
-api_token = "..."
-bucket = "share"
-kv_namespace_id = "..."
+| Key | Description |
+|-----|-------------|
+| `cloudflare.account_id` | Cloudflare account ID |
+| `cloudflare.r2_access_key_id` | R2 S3 API access key |
+| `cloudflare.r2_secret_access_key` | R2 S3 API secret key |
+| `cloudflare.api_token` | CF API token |
+| `cloudflare.bucket` | R2 bucket name (default: `share`) |
+| `cloudflare.kv_namespace_id` | Workers KV namespace ID |
+| `urls.public_base` | Your domain (e.g. `https://yourdomain.com`) |
+| `upload.strip_metadata` | Strip EXIF before upload (default: `true`) |
 
-[urls]
-public_base = "https://pub-<hash>.r2.dev"
+## Cloudflare free tier limits
 
-[upload]
-strip_metadata = true  # set to false to keep metadata by default
+| Service | Limit | Usage |
+|---------|-------|-------|
+| R2 | 10 GB storage, 1M writes/mo, 10M reads/mo, zero egress | File storage |
+| Workers KV | 1 GB storage, 100K reads/day, 1K writes/day | File metadata |
+| Workers | 100K requests/day, 10ms CPU/request | Serve files + landing page |
+
+## VPN note
+
+R2's S3 endpoint uses TLS that some VPNs break. If uploads fail with SSL errors, bypass VPN for `r2.cloudflarestorage.com`.
+
+## KV schema
+
 ```
-
-## KV Schema
-
+slug:<slug> → { name, size, content_type, uploaded_at, downloads, r2_key, slug, public }
 ```
-Key: "file:<YYYY-MM-DD>/<filename>"
-Value: {
-  "name": "<filename>",
-  "size": <bytes>,
-  "content_type": "<mime>",
-  "uploaded_at": "<ISO8601>",
-  "downloads": 0,
-  "r2_key": "<YYYY-MM-DD>/<filename>"
-}
-```
-
-## Future
-
-- [ ] Web panel on Cloudflare Pages (file listing + download metrics, dub.sh-like)
-- [ ] Download tracking via Pages Functions (`/f/<key>` → increment counter + redirect)
-- [ ] Custom domain setup
-- [ ] Expiry support (auto-delete after N days)

@@ -1,0 +1,13 @@
+[cloudflare]
+account_id = "your-account-id"
+r2_access_key_id = "your-r2-access-key"
+r2_secret_access_key = "your-r2-secret-key"
+api_token = "your-cf-api-token"
+bucket = "share"
+kv_namespace_id = "your-kv-namespace-id"
+
+[urls]
+public_base = "https://yourdomain.com"
+
+[upload]
+strip_metadata = true

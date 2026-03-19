@@ -1,13 +1,14 @@
 [project]
 name = "share"
-version = "0.2.0"
-description = "CLI file sharing backed by Cloudflare R2 + KV"
+version = "0.3.0"
+description = "CLI file sharing with short links and download tracking. Backed by Cloudflare R2 + Workers."
 requires-python = ">=3.12"
 dependencies = [
     "boto3>=1.42.54",
     "cloudflare>=4.3.1",
     "Pillow>=11.0.0",
     "rich>=14.3.3",
+    "sqids>=0.5.0",
 ]
 
 [project.scripts]

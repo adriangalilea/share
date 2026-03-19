@@ -1,12 +1,14 @@
-"""share — CLI file sharing backed by Cloudflare R2 + KV. Zero cost, full ownership."""
+"""share — CLI file sharing backed by Cloudflare R2 + Workers KV. Zero cost, full ownership."""
 
 import argparse
 import json
 import mimetypes
+import re
 import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import tomllib
 from datetime import datetime, timezone
 from pathlib import Path
@@ -15,16 +17,27 @@ import boto3
 import cloudflare
 from rich.console import Console
 from rich.table import Table
+from sqids import Sqids
 
 CONFIG_PATH = Path.home() / ".config" / "share" / "config.toml"
 console = Console()
+sqids = Sqids()
+
+SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,62}$")
 
 
 def load_config() -> dict:
     assert CONFIG_PATH.exists(), f"Config not found at {CONFIG_PATH}. Run: share setup"
     with open(CONFIG_PATH, "rb") as f:
         config = tomllib.load(f)
-    for key in ("account_id", "r2_access_key_id", "r2_secret_access_key", "api_token", "bucket", "kv_namespace_id"):
+    for key in (
+        "account_id",
+        "r2_access_key_id",
+        "r2_secret_access_key",
+        "api_token",
+        "bucket",
+        "kv_namespace_id",
+    ):
         assert key in config["cloudflare"], f"Missing config key: cloudflare.{key}"
     assert "public_base" in config["urls"], "Missing config key: urls.public_base"
     return config
@@ -45,6 +58,18 @@ def cf_client(config: dict) -> cloudflare.Cloudflare:
     return cloudflare.Cloudflare(api_token=config["cloudflare"]["api_token"])
 
 
+def _parse_kv_value(raw: str) -> dict:
+    """Parse KV value, handling the Python SDK's {metadata, value} wrapper."""
+    parsed = json.loads(raw)
+    if (
+        isinstance(parsed, dict)
+        and "value" in parsed
+        and isinstance(parsed["value"], str)
+    ):
+        return json.loads(parsed["value"])
+    return parsed
+
+
 def kv_put(config: dict, cf: cloudflare.Cloudflare, key: str, value: dict) -> None:
     cf.kv.namespaces.values.update(
         key_name=key,
@@ -53,6 +78,23 @@ def kv_put(config: dict, cf: cloudflare.Cloudflare, key: str, value: dict) -> No
         value=json.dumps(value),
         metadata=json.dumps({"name": value["name"], "size": value["size"]}),
     )
+
+
+def _read_kv_response(raw) -> dict:
+    """Read a BinaryAPIResponse from KV and parse the JSON value."""
+    return _parse_kv_value(raw.read().decode())
+
+
+def kv_get(config: dict, cf: cloudflare.Cloudflare, key: str) -> dict | None:
+    try:
+        raw = cf.kv.namespaces.values.get(
+            key_name=key,
+            account_id=config["cloudflare"]["account_id"],
+            namespace_id=config["cloudflare"]["kv_namespace_id"],
+        )
+        return _read_kv_response(raw)
+    except cloudflare.NotFoundError:
+        return None
 
 
 def kv_delete(config: dict, cf: cloudflare.Cloudflare, key: str) -> None:
@@ -71,18 +113,20 @@ def kv_list(config: dict, cf: cloudflare.Cloudflare) -> list[dict]:
     results = []
     for key_obj in keys:
         name = key_obj.name
-        if not name.startswith("file:"):
+        if not name.startswith("slug:"):
             continue
         raw = cf.kv.namespaces.values.get(
             key_name=name,
             account_id=config["cloudflare"]["account_id"],
             namespace_id=config["cloudflare"]["kv_namespace_id"],
         )
-        results.append(json.loads(raw.json()["value"]))
+        results.append(_read_kv_response(raw))
     return results
 
 
-IMAGE_EXTENSIONS = frozenset({".jpg", ".jpeg", ".png", ".tiff", ".tif", ".webp", ".bmp", ".gif"})
+IMAGE_EXTENSIONS = frozenset(
+    {".jpg", ".jpeg", ".png", ".tiff", ".tif", ".webp", ".bmp", ".gif"}
+)
 VIDEO_EXTENSIONS = frozenset({".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v"})
 
 
@@ -98,7 +142,7 @@ def strip_metadata(path: Path) -> tuple[Path | None, bool]:
         return _strip_image_metadata(path), True
     if ext in VIDEO_EXTENSIONS:
         return _strip_video_metadata(path)
-    return None, True  # not a strippable type, nothing to warn about
+    return None, True
 
 
 def _strip_image_metadata(path: Path) -> Path:
@@ -117,18 +161,52 @@ def _strip_image_metadata(path: Path) -> Path:
 
 def _strip_video_metadata(path: Path) -> tuple[Path | None, bool]:
     if not shutil.which("ffmpeg"):
-        console.print("[yellow]⚠ ffmpeg not found — video metadata NOT stripped (brew install ffmpeg)[/yellow]")
+        console.print(
+            "[yellow]ffmpeg not found — video metadata NOT stripped (brew install ffmpeg)[/yellow]"
+        )
         return None, False
     temp_path = Path(tempfile.mkstemp(suffix=path.suffix)[1])
     result = subprocess.run(
-        ["ffmpeg", "-i", str(path), "-map_metadata", "-1", "-c", "copy", "-y", str(temp_path)],
+        [
+            "ffmpeg",
+            "-i",
+            str(path),
+            "-map_metadata",
+            "-1",
+            "-c",
+            "copy",
+            "-y",
+            str(temp_path),
+        ],
         capture_output=True,
     )
-    assert result.returncode == 0, f"ffmpeg metadata strip failed: {result.stderr.decode()}"
+    assert result.returncode == 0, (
+        f"ffmpeg metadata strip failed: {result.stderr.decode()}"
+    )
     return temp_path, True
 
 
+def _format_size(size: int) -> str:
+    if size < 1024:
+        return f"{size} B"
+    if size < 1_048_576:
+        return f"{size / 1024:.1f} KB"
+    if size < 1_073_741_824:
+        return f"{size / 1_048_576:.1f} MB"
+    return f"{size / 1_073_741_824:.1f} GB"
+
+
 # --- Commands ---
+
+
+def generate_slug(args_slug: str | None) -> str:
+    if args_slug:
+        slug = args_slug.lower().strip()
+        assert SLUG_RE.match(slug), (
+            f"Invalid slug '{slug}'. Use lowercase alphanumeric, dots, hyphens, underscores. Max 63 chars."
+        )
+        return slug
+    return sqids.encode([int(time.time() * 1000)])
 
 
 def cmd_upload(args: argparse.Namespace) -> None:
@@ -138,6 +216,7 @@ def cmd_upload(args: argparse.Namespace) -> None:
 
     config = load_config()
     name = args.name or path.name
+    slug = generate_slug(getattr(args, "slug", None))
     date_prefix = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     r2_key = f"{date_prefix}/{name}"
     content_type = mimetypes.guess_type(name)[0] or "application/octet-stream"
@@ -145,7 +224,10 @@ def cmd_upload(args: argparse.Namespace) -> None:
     s3 = r2_client(config)
     cf = cf_client(config)
 
-    # CLI flags override config default (strip_metadata defaults to true)
+    with console.status("Checking slug..."):
+        existing = kv_get(config, cf, f"slug:{slug}")
+    assert not existing, f"Slug '{slug}' already taken. Pick another with --slug"
+
     config_default = config.get("upload", {}).get("strip_metadata", True)
     should_strip = args.strip_metadata or (config_default and not args.keep_metadata)
 
@@ -179,12 +261,14 @@ def cmd_upload(args: argparse.Namespace) -> None:
         "uploaded_at": datetime.now(timezone.utc).isoformat(),
         "downloads": 0,
         "r2_key": r2_key,
+        "slug": slug,
+        "public": args.public,
     }
 
-    kv_put(config, cf, f"file:{r2_key}", metadata)
+    with console.status("Saving metadata..."):
+        kv_put(config, cf, f"slug:{slug}", metadata)
 
-    public_url = f"{config['urls']['public_base']}/{r2_key}"
-
+    public_url = f"{config['urls']['public_base']}/{slug}"
     subprocess.run(["pbcopy"], input=public_url.encode(), check=False)
     console.print(f"[green]{public_url}[/green] (copied)")
 
@@ -192,76 +276,89 @@ def cmd_upload(args: argparse.Namespace) -> None:
 def cmd_ls(args: argparse.Namespace) -> None:
     config = load_config()
     cf = cf_client(config)
-    files = kv_list(config, cf)
+    with console.status("Loading..."):
+        files = kv_list(config, cf)
 
     if not files:
         console.print("[dim]No files shared yet.[/dim]")
         return
 
+    base = config["urls"]["public_base"]
     table = Table(title="Shared Files")
+    table.add_column("Slug", style="green")
     table.add_column("Name", style="cyan")
     table.add_column("Size", style="yellow", justify="right")
     table.add_column("Uploaded", style="dim")
-    table.add_column("Downloads", justify="right")
-    table.add_column("URL", style="blue")
+    table.add_column("DLs", justify="right")
+    table.add_column("Vis", style="dim")
 
     total_size = 0
     for f in sorted(files, key=lambda x: x["uploaded_at"], reverse=True):
-        size_mb = f["size"] / 1_048_576
-        size_str = f"{size_mb:.1f} MB" if size_mb < 1024 else f"{size_mb / 1024:.1f} GB"
+        size_str = _format_size(f["size"])
         total_size += f["size"]
-        url = f"{config['urls']['public_base']}/{f['r2_key']}"
+        slug = f.get("slug", "")
         uploaded = f["uploaded_at"][:10]
-        table.add_row(f["name"], size_str, uploaded, str(f["downloads"]), url)
+        vis = "pub" if f.get("public") else ""
+        table.add_row(slug, f["name"], size_str, uploaded, str(f["downloads"]), vis)
 
     console.print(table)
     total_gb = total_size / 1_073_741_824
-    console.print(f"\n[dim]{len(files)} files, {total_gb:.2f} GB total (10 GB free tier)[/dim]")
+    console.print(
+        f"\n[dim]{len(files)} files, {total_gb:.2f} GB total (10 GB free tier)[/dim]"
+    )
+    console.print(f"[dim]{base}/<slug>[/dim]")
 
 
 def cmd_rm(args: argparse.Namespace) -> None:
     config = load_config()
     cf = cf_client(config)
 
-    files = kv_list(config, cf)
-    matches = [f for f in files if f["name"] == args.name or f["r2_key"] == args.name]
+    with console.status("Loading..."):
+        files = kv_list(config, cf)
+    matches = [
+        f
+        for f in files
+        if f.get("slug") == args.name
+        or f["name"] == args.name
+        or f["r2_key"] == args.name
+    ]
 
-    assert matches, f"File not found: {args.name}"
+    assert matches, f"File not found: {args.name}. Use slug, filename, or r2_key."
     if len(matches) > 1:
         console.print(f"[yellow]Multiple matches for '{args.name}':[/yellow]")
         for f in matches:
-            console.print(f"  {f['r2_key']}")
-        console.print("[yellow]Use the full r2_key to delete a specific one.[/yellow]")
+            console.print(f"  {f.get('slug', '?'):15} {f['name']:30} {f['r2_key']}")
+        console.print("[yellow]Use the slug to delete a specific one.[/yellow]")
         return
 
     target = matches[0]
     s3 = r2_client(config)
 
-    s3.delete_object(Bucket=config["cloudflare"]["bucket"], Key=target["r2_key"])
-    kv_delete(config, cf, f"file:{target['r2_key']}")
+    with console.status("Deleting..."):
+        s3.delete_object(Bucket=config["cloudflare"]["bucket"], Key=target["r2_key"])
+        kv_delete(config, cf, f"slug:{target['slug']}")
 
-    console.print(f"[red]Deleted {target['r2_key']}[/red]")
+    console.print(f"[red]Deleted {target['name']} (/{target.get('slug', '')})[/red]")
 
 
 def cmd_setup(args: argparse.Namespace) -> None:
-    console.print("[bold]share setup[/bold] — configure Cloudflare R2 + KV\n")
-
+    console.print("[bold]share setup[/bold]\n")
     console.print("You need from the Cloudflare dashboard:")
-    console.print("  1. Account ID: wrangler whoami, or dashboard URL: dash.cloudflare.com/<ACCOUNT_ID>/...")
-    console.print("  2. R2 API credentials: dashboard → R2 → Manage R2 API Tokens → Create API token")
-    console.print("     → Object Read & Write, scope to your bucket")
-    console.print("  3. CF API token: dashboard → My Profile → API Tokens → Create Token")
-    console.print("     → use template 'Edit Cloudflare Workers' (covers KV read/write)\n")
+    console.print("  1. Account ID (dashboard URL or wrangler whoami)")
+    console.print("  2. R2 API token: R2 → Manage R2 API Tokens → Object Read & Write")
+    console.print(
+        "  3. CF API token: My Profile → API Tokens → Edit Cloudflare Workers"
+    )
+    console.print("     + add Zone DNS Edit + Zone Read permissions\n")
 
     from rich.prompt import Prompt
 
     account_id = Prompt.ask("Cloudflare Account ID")
     r2_access_key_id = Prompt.ask("R2 Access Key ID")
     r2_secret_access_key = Prompt.ask("R2 Secret Access Key")
-    api_token = Prompt.ask("CF API Token (for KV)")
+    api_token = Prompt.ask("CF API Token")
     bucket = Prompt.ask("R2 Bucket name", default="share")
 
-    # Verify R2 credentials
     s3 = boto3.client(
         "s3",
         endpoint_url=f"https://{account_id}.r2.cloudflarestorage.com",
@@ -278,27 +375,20 @@ def cmd_setup(args: argparse.Namespace) -> None:
         s3.create_bucket(Bucket=bucket)
         console.print(f"[green]Bucket '{bucket}' created.[/green]")
 
-    # Verify KV credentials and find/create namespace
     cf = cloudflare.Cloudflare(api_token=api_token)
-
     namespaces = cf.kv.namespaces.list(account_id=account_id)
     existing = [ns for ns in namespaces if ns.title == "share"]
 
     if existing:
         kv_namespace_id = existing[0].id
-        console.print(f"[green]KV namespace 'share' exists: {kv_namespace_id}[/green]")
+        console.print(f"[green]KV namespace 'share' found: {kv_namespace_id}[/green]")
     else:
         console.print("[yellow]Creating KV namespace 'share'...[/yellow]")
         ns = cf.kv.namespaces.create(account_id=account_id, title="share")
         kv_namespace_id = ns.id
         console.print(f"[green]KV namespace created: {kv_namespace_id}[/green]")
 
-    console.print("\n[yellow]Enable public access on the R2 bucket:[/yellow]")
-    console.print(f"  dashboard.cloudflare.com → R2 → {bucket} → Settings → Public access")
-    console.print("  → Enable R2.dev subdomain")
-    console.print("  → Copy the public URL (looks like: https://pub-<hash>.r2.dev)\n")
-
-    public_base = Prompt.ask("R2 public URL base (e.g. https://pub-abc123.r2.dev)")
+    public_base = Prompt.ask("Your domain (e.g. https://yourdomain.com)")
     public_base = public_base.rstrip("/")
 
     CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -318,32 +408,48 @@ strip_metadata = true
 """
     CONFIG_PATH.write_text(config_content)
     console.print(f"\n[green]Config saved to {CONFIG_PATH}[/green]")
-    console.print("[green]Ready! Try: share upload <file>[/green]")
+    console.print(f"[dim]KV namespace ID for wrangler.toml: {kv_namespace_id}[/dim]")
+    console.print("\n[bold]Next steps:[/bold]")
+    console.print(
+        "  1. Update worker/wrangler.toml with your KV namespace ID and domain"
+    )
+    console.print("  2. Deploy: cd worker && npx wrangler deploy")
+    console.print("  3. Upload: share upload <file>")
 
 
 def main():
-    parser = argparse.ArgumentParser(prog="share", description="CLI file sharing backed by Cloudflare R2 + KV")
+    parser = argparse.ArgumentParser(
+        prog="share", description="CLI file sharing · Cloudflare R2 + Workers"
+    )
     sub = parser.add_subparsers(dest="command")
 
-    p_upload = sub.add_parser("upload", help="Upload a file and get a public URL")
+    p_upload = sub.add_parser("upload", help="Upload a file and get a short URL")
     p_upload.add_argument("file", help="Path to file")
-    p_upload.add_argument("--name", help="Override filename")
+    p_upload.add_argument("--name", help="Override download filename")
+    p_upload.add_argument("--slug", help="Custom URL slug (auto-generated if omitted)")
+    p_upload.add_argument(
+        "--public", action="store_true", help="Show on landing page (default: private)"
+    )
     meta_group = p_upload.add_mutually_exclusive_group()
-    meta_group.add_argument("--keep-metadata", action="store_true", help="Upload with metadata intact")
-    meta_group.add_argument("--strip-metadata", action="store_true", help="Strip metadata before upload")
+    meta_group.add_argument(
+        "--keep-metadata", action="store_true", help="Upload with metadata intact"
+    )
+    meta_group.add_argument(
+        "--strip-metadata", action="store_true", help="Strip metadata before upload"
+    )
 
     sub.add_parser("ls", help="List shared files")
 
     p_rm = sub.add_parser("rm", help="Delete a shared file")
-    p_rm.add_argument("name", help="Filename or r2_key to delete")
+    p_rm.add_argument("name", help="Slug, filename, or r2_key to delete")
 
     sub.add_parser("setup", help="Configure Cloudflare credentials")
 
     args = parser.parse_args()
-
     if args.command is None:
         parser.print_help()
         sys.exit(1)
 
-    commands = {"upload": cmd_upload, "ls": cmd_ls, "rm": cmd_rm, "setup": cmd_setup}
-    commands[args.command](args)
+    {"upload": cmd_upload, "ls": cmd_ls, "rm": cmd_rm, "setup": cmd_setup}[
+        args.command
+    ](args)
