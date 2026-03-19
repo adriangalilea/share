@@ -19,3 +19,8 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.ruff]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.15.6",
+]
