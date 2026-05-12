@@ -49,7 +49,7 @@ async function serveSlug(
 ): Promise<Response> {
 	const raw = await env.KV.get(`slug:${slug}`);
 	if (!raw) {
-		return notFound(env);
+		return serveR2Direct(slug, request, env);
 	}
 
 	const meta = parseKVValue(raw);
@@ -61,6 +61,28 @@ async function serveSlug(
 	}
 
 	return serveFile(meta as FileMeta, request, slug, env);
+}
+
+async function serveR2Direct(
+	key: string,
+	request: Request,
+	env: Env
+): Promise<Response> {
+	const object = await env.R2.get(key);
+	if (!object) {
+		return notFound(env);
+	}
+
+	const headers = new Headers();
+	headers.set("Content-Type", object.httpMetadata?.contentType || "application/octet-stream");
+	headers.set("Content-Length", object.size.toString());
+	headers.set("Cache-Control", "public, max-age=86400");
+
+	if (request.method === "HEAD") {
+		return new Response(null, { headers });
+	}
+
+	return new Response(object.body, { headers });
 }
 
 async function serveFile(

@@ -1,6 +1,6 @@
 [project]
 name = "share"
-version = "0.5.1"
+version = "0.5.2"
 description = "CLI file sharing and link shortening. Backed by Cloudflare R2 + Workers."
 readme = "README.md"
 authors = [{ name = "Adrian Galilea", email = "adriangalilea@gmail.com" }]
