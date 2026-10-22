@@ -26,6 +26,25 @@ sqids = Sqids()
 SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,62}$")
 
 
+SECRET_KEYS = ("r2_access_key_id", "r2_secret_access_key", "api_token")
+
+
+def resolve(value: str, reader: list[str] | None) -> str:
+    """A config value, or the secret an `op://` reference names, read by the
+    config's `[secrets] read` command (e.g. `op read`) at the moment it is
+    needed: the key never sits in the config file."""
+    if not value.startswith("op://"):
+        return value
+    assert reader, (
+        f"{value} is a reference: set [secrets] read to the command that reads it"
+    )
+    read = subprocess.run([*reader, value], capture_output=True, text=True, check=False)
+    assert read.returncode == 0, (
+        f"{reader[0]} did not read {value}: {read.stderr.strip()}"
+    )
+    return read.stdout.rstrip("\n")
+
+
 def load_config() -> dict:
     assert CONFIG_PATH.exists(), f"Config not found at {CONFIG_PATH}. Run: share setup"
     with open(CONFIG_PATH, "rb") as f:
@@ -40,6 +59,11 @@ def load_config() -> dict:
     ):
         assert key in config["cloudflare"], f"Missing config key: cloudflare.{key}"
     assert "public_base" in config["urls"], "Missing config key: urls.public_base"
+    reader = config.get("secrets", {}).get("read")
+    for key in SECRET_KEYS:
+        config["cloudflare"][key] = resolve(
+            config["cloudflare"][key], reader.split() if reader else None
+        )
     return config
 
 

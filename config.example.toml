@@ -11,3 +11,8 @@ public_base = "https://yourdomain.com"
 
 [upload]
 strip_metadata = true
+
+# The keys above may be op:// references instead of values, read by this
+# command each time share runs (never written here):
+# [secrets]
+# read = "op read"

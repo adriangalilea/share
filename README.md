@@ -182,6 +182,9 @@ share upload myfile.pdf
 | `cloudflare.kv_namespace_id` | Workers KV namespace ID |
 | `urls.public_base` | Your domain (e.g. `https://yourdomain.com`) |
 | `upload.strip_metadata` | Strip EXIF before upload (default: `true`) |
+| `secrets.read` | The command that reads an `op://` reference (e.g. `op read`) |
+
+The three keys (`r2_access_key_id`, `r2_secret_access_key`, `api_token`) may each be an `op://` reference instead of a value: share then runs `secrets.read` with it each time it needs the key, so the key is never written to the config file.
 
 ## Cloudflare free tier limits
 
